@@ -32,6 +32,7 @@ typedef struct privatedata {
 	int nMinor;
 
 	struct cdev cdev;
+	struct device *buzzer_device;
 	struct mutex lock;
 	struct buzzer buzzerdev;
 	struct task_struct *task;
@@ -39,6 +40,8 @@ typedef struct privatedata {
 } buzzer_private;
 
 buzzer_private devices[BUZZER_N_MINORS];
+struct class *buzzer_class;
+
 
 int buzzer_thread(void *data)
 {
@@ -96,11 +99,37 @@ static int buzzer_release(struct inode *inode,struct file *filp)
 	return 0;
 }
 
+static ssize_t freq_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+//	buzzer_private *priv;
+//	size_t n = 0;
+//	unsigned int freq = 0;
+//	n = sizeof(unsigned char);
+//	n = min(n, count);
+//	mutex_lock(&priv->lock);
+//	if (copy_from_user(&freq, buf, n))
+//	{
+//		mutex_unlock(&priv->lock);
+//		return -EFAULT;
+//	}
+//	priv->buzzerdev.freq = freq;
+//	mutex_unlock(&priv->lock);
+	PINFO("In char driver class attr freq store() function\n");
+	return 0;
+}
+static ssize_t freq_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	PINFO("In char driver class attr freq show() function\n");
+	return 0;
+}
+static DEVICE_ATTR_RW(freq);
+
 static long buzzer_ioctl(struct file *filp, unsigned int ioctl_command, unsigned long arg)
 {
 	buzzer_private *priv;
-	priv = filp->private_data;
 	unsigned int repeat;
+	priv = filp->private_data;
+
 	switch ((char) ioctl_command)
 	{
 	case IOCTL_START_BUZZER:
@@ -172,6 +201,12 @@ static ssize_t buzzer_write(struct file *filp,
 	return n;
 }
 
+static struct attribute *buzzer_device_attrs[] = {
+	&dev_attr_freq.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(buzzer_device);
+
 static const struct file_operations buzzer_fops= {
 	.owner				= THIS_MODULE,
 	.open				= buzzer_open,
@@ -185,7 +220,6 @@ static int __init buzzer_init(void)
 {
 	int i;
 	int res;
-
 	res = alloc_chrdev_region(&buzzer_device_num,BUZZER_FIRST_MINOR,BUZZER_N_MINORS ,DRIVER_NAME);
 	if(res) {
 		PERR("register device no failed\n");
@@ -193,10 +227,33 @@ static int __init buzzer_init(void)
 	}
 	buzzer_major = MAJOR(buzzer_device_num);
 
+	buzzer_class = class_create(THIS_MODULE , DRIVER_NAME);
+	if(buzzer_class == NULL) {
+		PERR("class creation failed\n");
+		return -1;
+	}
+
 	for(i=0;i<BUZZER_N_MINORS;i++) {
 		buzzer_device_num= MKDEV(buzzer_major ,BUZZER_FIRST_MINOR+i);
 		cdev_init(&devices[i].cdev , &buzzer_fops);
 		cdev_add(&devices[i].cdev,buzzer_device_num,1);
+
+		devices[i].buzzer_device = device_create_with_groups(buzzer_class, NULL, buzzer_device_num, NULL,buzzer_device_groups, "buzzer%d", MINOR(buzzer_device_num));
+
+		if (IS_ERR(devices[i].buzzer_device))
+		{
+			PERR("Can't create device\n");
+		}
+
+		devices[i].buzzer_device = device_create(buzzer_class,
+						NULL, buzzer_device_num, NULL , "buzzer%d", i);
+		if(devices[i].buzzer_device == NULL) {
+
+			class_destroy(buzzer_class);
+			PERR("device creation failed\n");
+			return -1;
+		}
+
 
 		devices[i].nMinor = BUZZER_FIRST_MINOR+i;
 		devices[i].buzzerdev.gpio_pin = GPIO_PIN; //Will get in dev tree van gan gia tri tai day
@@ -223,9 +280,9 @@ static void __exit buzzer_exit(void)
 		buzzerdev_deinit(&devices[i].buzzerdev);
 
 		cdev_del(&devices[i].cdev);
-
+		device_destroy(buzzer_class , buzzer_device_num);
 	}
-
+	class_destroy(buzzer_class);
 	unregister_chrdev_region(buzzer_device_num ,BUZZER_N_MINORS);	
 
 }
