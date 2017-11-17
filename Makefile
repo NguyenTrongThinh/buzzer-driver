@@ -1,6 +1,6 @@
 
 obj-m		:= buzzer.o 
-buzzer-y 	:= buzzer_dev.o buzzer_chr.o
+buzzer-y 	:= buzzer_dev.o buzzer_char.o
 
 SRC := $(shell pwd)
 
