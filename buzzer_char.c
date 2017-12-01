@@ -23,6 +23,7 @@ Description		:		LINUX DEVICE DRIVER PROJECT
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("THINHNGUYEN");
+MODULE_VERSION("1.0.0");
 
 int buzzer_major=0;
 
@@ -40,9 +41,9 @@ typedef struct privatedata {
 
 } buzzer_private;
 
-buzzer_private devices[BUZZER_N_MINORS];
-struct task_struct *task[BUZZER_N_MINORS];
-
+buzzer_private *devices;
+struct task_struct **task;
+unsigned int numofdev = 0;
 struct class *buzzer_class;
 
 
@@ -213,15 +214,33 @@ static const struct file_operations buzzer_fops= {
 	.unlocked_ioctl		= buzzer_ioctl,
 };
 
-static int __init buzzer_init(void)
+static int buzzer_probe(struct platform_device *pdev)
 {
-	/* TODO Auto-generated Function Stub */
-
 	int i;
-	int res;
+	int res = 0;
+	unsigned int defaultfreq = 100, defaultrepeat = 20, activesate = ACTIVE_HIGHT;
 	char threadName[100];
+	const char *buzzergpios[5];
+	const char *activestatus;
+	struct device_node *np = pdev->dev.of_node;
 
-	res = alloc_chrdev_region(&buzzer_device_num,BUZZER_FIRST_MINOR,BUZZER_N_MINORS ,DRIVER_NAME);
+	numofdev = of_property_read_string_array(np, "gpios", buzzergpios, 5);
+		if (numofdev <= 0)
+			return -ENODEV;
+	if (of_property_read_u32(np, "freq", &defaultfreq))
+		defaultfreq = 100;
+	if (of_property_read_u32(np, "repeat", &defaultrepeat))
+		defaultrepeat = 2;
+	if (of_property_read_string(np, "active_status", &activestatus))
+		activesate = ACTIVE_HIGHT;
+	else
+	{
+		if (strcmp(activestatus, "low") == 0)
+			activesate = ACTIVE_LOW;
+		else
+			activesate = ACTIVE_HIGHT;
+	}
+	res = alloc_chrdev_region(&buzzer_device_num,BUZZER_FIRST_MINOR,numofdev ,DRIVER_NAME);
 	if(res) {
 		PERR("register device no failed\n");
 		return -1;
@@ -232,7 +251,11 @@ static int __init buzzer_init(void)
 		PERR("class creation failed\n");
 		return -1;
 	}
-	for(i=0;i<BUZZER_N_MINORS;i++) {
+	devices = (buzzer_private*)kcalloc(numofdev, sizeof(buzzer_private), GFP_KERNEL);
+	task = (struct task_struct**)kcalloc(numofdev, sizeof(struct task_struct*), GFP_KERNEL);
+
+	for (i = 0; i<numofdev; i++)
+	{
 		buzzer_device_num= MKDEV(buzzer_major ,BUZZER_FIRST_MINOR+i);
 		cdev_init(&devices[i].cdev , &buzzer_fops);
 		cdev_add(&devices[i].cdev,buzzer_device_num,1);
@@ -244,9 +267,13 @@ static int __init buzzer_init(void)
 		}
 
 		devices[i].nMinor = BUZZER_FIRST_MINOR+i;
-		devices[i].buzzerdev.gpio_pin = GPIO_PIN; //Will get in dev tree van gan gia tri tai day
-		buzzerdev_set_freq(&devices[i].buzzerdev, 2);
-		buzzerdev_set_repeat(&devices[i].buzzerdev, 5);
+		if (kstrtoint(buzzergpios[i], 0, &res) == 0)
+			devices[i].buzzerdev.gpio_pin = res;
+		else
+			PDEBUG("Cannot convert PIN");
+		buzzerdev_set_freq(&devices[i].buzzerdev, defaultfreq);
+		buzzerdev_set_repeat(&devices[i].buzzerdev, defaultrepeat);
+		buzzerdev_set_active_state(&devices[i].buzzerdev, activesate);
 		buzzerdev_init(&devices[i].buzzerdev);
 		dev_set_drvdata(devices[i].buzzer_device, &devices[i]);
 		memset(threadName, 0, sizeof(threadName));
@@ -267,19 +294,16 @@ static int __init buzzer_init(void)
 	}
 
 	PINFO("INIT\n");
-
 	return 0;
 }
-
-static void __exit buzzer_exit(void)
-{	
-	/* TODO Auto-generated Function Stub */
-
+static int buzzer_remove(struct platform_device *pdev)
+{
 	int i;
 
 	PINFO("EXIT\n");
 
-	for(i=0;i<BUZZER_N_MINORS;i++) {
+	for(i=0;i<numofdev;i++)
+	{
 		buzzer_device_num= MKDEV(buzzer_major ,BUZZER_FIRST_MINOR+i);
 		buzzerdev_deinit(&devices[i].buzzerdev);
 		if (task[i] != NULL)
@@ -296,9 +320,26 @@ static void __exit buzzer_exit(void)
 	}
 	class_destroy(buzzer_class);
 	unregister_chrdev_region(buzzer_device_num ,BUZZER_N_MINORS);	
-
+	kfree(devices);
+	kfree(task);
+	return 0;
 }
 
-module_init(buzzer_init);
-module_exit(buzzer_exit);
 
+static const struct of_device_id buzzer_dts[] = {
+		{ .compatible = "gpio-buzzers", },
+		{}
+};
+MODULE_DEVICE_TABLE(of, buzzer_dts);
+
+static struct platform_driver buzzer_driver = {
+		.driver = {
+				.name = "buzzer",
+				.owner = THIS_MODULE,
+				.of_match_table = of_match_ptr(buzzer_dts),
+		},
+		.probe = buzzer_probe,
+		.remove = buzzer_remove,
+};
+
+module_platform_driver(buzzer_driver);

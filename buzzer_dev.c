@@ -29,9 +29,14 @@ void buzzerdev_set_repeat(struct buzzer *buzz, unsigned int times)
 }
 void buzzerdev_on(struct buzzer *buzz)
 {
-	gpio_set_value(buzz->gpio_pin, 0);
+	gpio_set_value(buzz->gpio_pin, buzz->activestate);
 }
 void buzzerdev_off(struct buzzer *buzz)
 {
-	gpio_set_value(buzz->gpio_pin, 1);
+	gpio_set_value(buzz->gpio_pin, (buzz->activestate ^ 1));
+}
+
+void buzzerdev_set_active_state(struct buzzer *buzz, unsigned int state)
+{
+	buzz->activestate = state;
 }
